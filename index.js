@@ -1,67 +1,78 @@
+const { exit, exec } = require('shelljs');
 const fs = require('fs');
-
-const { exec, exit } = require('shelljs');
 const packageFile = require('./package.json');
 
-const MAIN_BRANCH = 'main';
-const MERGE_INTO_BRANCH = 'staging';
+class VersionUpdater {
+  constructor(mainBranch = 'main', releaseBranch = 'release') {
+    this.mainBranch = mainBranch;
+    this.releaseBranch = releaseBranch;
+    [this.versionUpdateType] = process.argv.slice(2);
+    this.runExecCommand = this.runExecCommand.bind(this);
+  }
 
-const runExecCommand = (command) => {
+  update() {
+    this.ensureRunOnlyOnMasterBranch();
+    this.updateGitRemotes();
+    this.updatePackageJsonVersionCode();
+    this.updatePackageJsonVersion();
+    this.updateCodeRepository();
+    exit(0);
+  }
+
+  ensureRunOnlyOnMasterBranch() {
+    const runBranch = this.runExecCommand('git rev-parse --abbrev-ref HEAD');
+    if (runBranch.trim() !== this.mainBranch.trim()) {
+      console.info(`You tried to run script on ${runBranch} branch. It should be run only on ${this.mainBranch}`);
+      exit(0);
+    }
+  }
+
+  runExecCommand(command) {
     console.info(`Running command: ${command}`);
     const execCommand = exec(command, { silent: true });
     if (execCommand.code !== 0) {
-        console.error(`Command failed: ${command}: ${execCommand.stderr}`);
-        exit(1);
+      console.error(`Command failed: ${command}: ${execCommand.stderr}`);
+      exit(1);
     }
     return execCommand.stdout;
-};
+  }
 
-const updateGitRemotes = () => {
-    runExecCommand('git config remote.origin.fetch "+refs/heads/*:refs/remotes/origin/*"');
-    runExecCommand('git fetch');
-};
+  /**
+     * Because most of CI\CD store remote only for branch you run it,
+     * we need to update information about all branches
+     */
+  updateGitRemotes() {
+    this.runExecCommand('git config remote.origin.fetch "+refs/heads/*:refs/remotes/origin/*"');
+    this.runExecCommand('git fetch');
+  }
 
-const updatePackageJsonVersion = () => {
-    const versionUpdateType = process.argv.slice(2)[0];
+  updatePackageJsonVersion() {
+    const { versionUpdateType } = this;
     if (versionUpdateType === 'minor') {
-        runExecCommand('yarn version --minor');
+      this.runExecCommand('yarn version --minor');
     } else if (versionUpdateType === 'major') {
-        runExecCommand('yarn version --major');
+      this.runExecCommand('yarn version --major');
     } else {
-        runExecCommand('yarn version --patch');
+      this.runExecCommand('yarn version --patch');
     }
-};
+  }
 
-const updateCodeRepository = () => {
-    runExecCommand('git push');
-    runExecCommand('git fetch');
-    runExecCommand(`git checkout ${MERGE_INTO_BRANCH}`);
-    runExecCommand(`git merge ${MAIN_BRANCH} --allow-unrelated-histories`);
-    runExecCommand('git push');
-};
+  updateCodeRepository() {
+    this.runExecCommand('git push');
+    this.runExecCommand('git fetch');
+    this.runExecCommand(`git checkout ${this.releaseBranch}`);
+    this.runExecCommand(`git merge ${this.mainBranch} --allow-unrelated-histories`);
+    this.runExecCommand('git push');
+  }
 
-const updatePackageJsonVersionCode = () => {
+  updatePackageJsonVersionCode() {
     packageFile.versionCode += 1;
     try {
-        fs.writeFileSync('./package.json', JSON.stringify(packageFile), 'utf-8');
+      fs.writeFileSync('./package.json', JSON.stringify(packageFile), 'utf-8');
     } catch (err) {
-        console.error(err);
-        runExecCommand('git reset --hard');
-        exit(1);
+      console.error(err);
+      this.runExecCommand('git reset --hard');
+      exit(1);
     }
-};
-
-const ensureRunOnlyOnMasterBranch = () => {
-    const runBranch = runExecCommand('git rev-parse --abbrev-ref HEAD');
-    if (runBranch.trim() !== MAIN_BRANCH.trim()) {
-        console.info(`You tried to run script on ${runBranch} branch. It should be run only on ${MAIN_BRANCH}`);
-        exit(0);
-    }
-};
-
-ensureRunOnlyOnMasterBranch();
-updateGitRemotes();
-updatePackageJsonVersionCode();
-updatePackageJsonVersion();
-updateCodeRepository();
-exit(0);
+  }
+}
